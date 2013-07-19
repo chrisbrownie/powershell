@@ -124,33 +124,35 @@ table{ margin-left: 20px; }
 ## BEGIN Worker Functions
 ##############################
 
-Function Create-PieChart() {
-	param([string]$FileName)
-		
-	[void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+function Create-PieChart {
+param([string]$FileName
+    , [HashTable]$data
+    , [string]$chartTitle
+    , [int]$Width = 300
+    , [int]$Height = 290
+    , [int]$Left = 10
+    , [int]$Top = 10)
+
+    [void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
 	[void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms.DataVisualization")
 	
-	#Create our chart object 
 	$Chart = New-object System.Windows.Forms.DataVisualization.Charting.Chart 
-	$Chart.Width = 300
-	$Chart.Height = 290 
-	$Chart.Left = 10
-	$Chart.Top = 10
+	$Chart.Width = $Width
+	$Chart.Height = $Height
+	$Chart.Left = $Left
+	$Chart.Top = $Top
 
-	#Create a chartarea to draw on and add this to the chart 
-	$ChartArea = New-Object System.Windows.Forms.DataVisualization.Charting.ChartArea
+    $ChartArea = New-Object System.Windows.Forms.DataVisualization.Charting.ChartArea
 	$Chart.ChartAreas.Add($ChartArea) 
 	[void]$Chart.Series.Add("Data") 
 
-	#Add a datapoint for each value specified in the arguments (args) 
-    foreach ($value in $args[0]) {
-		Write-Host "Now processing chart value: " + $value
-		$datapoint = new-object System.Windows.Forms.DataVisualization.Charting.DataPoint(0, $value)
-	    $datapoint.AxisLabel = "Value" + "(" + $value + " GB)"
-	    $Chart.Series["Data"].Points.Add($datapoint)
-	}
+    foreach ($dataItem in $data.GetEnumerator()) {
+        $dataPoint = new-object System.Windows.Forms.DataVisualization.Charting.DataPoint(0, $dataItem.Value)
+        $dataPoint.AxisLabel = "{0} ({1})" -f $dataItem.Name,$dataItem.Value
+        $Chart.Series["Data"].Points.Add($dataPoint)
+    }
 
-	$Chart.Series["Data"].ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::Pie
+    $Chart.Series["Data"].ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::Pie
 	$Chart.Series["Data"]["PieLabelStyle"] = "Outside" 
 	$Chart.Series["Data"]["PieLineColor"] = "Black" 
 	$Chart.Series["Data"]["PieDrawingStyle"] = "Concave" 
@@ -159,19 +161,13 @@ Function Create-PieChart() {
 	#Set the title of the Chart to the current date and time 
 	$Title = new-object System.Windows.Forms.DataVisualization.Charting.Title 
 	$Chart.Titles.Add($Title) 
-	$Chart.Titles[0].Text = "RAM Usage Chart (Used/Free)"
+	$Chart.Titles[0].Text = $chartTitle
 
 	#Save the chart to a file
 	$Chart.SaveImage($FileName + ".png","png")
+
 }
 
-Function Get-HostUptime {
-	param ([string]$ComputerName)
-	$Uptime = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ComputerName
-	$LastBootUpTime = $Uptime.ConvertToDateTime($Uptime.LastBootUpTime)
-	$Time = (Get-Date) - $LastBootUpTime
-	Return '{0:00} Days, {1:00} Hours, {2:00} Minutes, {3:00} Seconds' -f $Time.Days, $Time.Hours, $Time.Minutes, $Time.Seconds
-}
 
 ##############################
 ## END Worker Functions
@@ -181,14 +177,16 @@ Function Get-HostUptime {
 ## BEGIN Smarts
 ##############################
 
-$DiskInfo = Get-WmiObject -Class Win32_Volume | Where-Object {($_.DriveType -eq 3) -and (($_.freespace/$_.capacity)*100 -lt $Settings.FreeDiskSpaceThreshold)} `
-            |  Select-Object SystemName,DriveType,Caption,Name, @{name='Size (GB)';expression={"{0:n0}" -f ($_.capacity/1gb)}}, `
+$DiskInfo = Get-WmiObject -Class Win32_Volume | Where-Object {$_.DriveType -eq 3} `
+            |  Select-Object Caption,Name, @{name='Size (GB)';expression={"{0:n0}" -f ($_.capacity/1gb)}}, @{name='Used (GB)'; expression={"{0:n0}" -f (($_.capacity-$_.freespace)/1gb)}}, `
             @{name='Percent Free';expression={"{0:n2}" -f ($_.freespace/$_.capacity*100)}} `
             | ConvertTo-Html -Fragment
             
 $OS = (Get-WmiObject Win32_OperatingSystem | Select @{name="OSDescription";Expression={$_.Caption + " (" + $_.Version + ")"}}).OSDescription
 
 $SystemInfo = Get-WmiObject -Class Win32_OperatingSystem | Select-Object Name, TotalVisibleMemorySize, FreePhysicalMemory
+
+### BEGIN Memory
 $TotalRAM = $SystemInfo.TotalVisibleMemorySize/1MB
 $FreeRAM = $SystemInfo.FreePhysicalMemory/1MB
 $UsedRAM = $TotalRAM - $FreeRAM
@@ -197,11 +195,15 @@ $TotalRAM = [Math]::Round($TotalRAM, 2)
 $FreeRAM = [Math]::Round($FreeRAM, 2)
 $UsedRAM = [Math]::Round($UsedRAM, 2)
 $RAMPercentFree = [Math]::Round($RAMPercentFree, 2)
-
+# Create the chart using our Chart Function
+#Create-PieChart -FileName ((Get-Location).Path + "\chart-memory") $FreeRAM, $UsedRAM
+Create-PieChart -FileName ((Get-Location).Path + "\chart-memory") -data @{"Free RAM"=$FreeRAM;"Used RAM"=$UsedRAM} -chartTitle "Memory Usage" -Width 300 -height 290
+$ListOfAttachments += "chart-memory.png"
+### END Memory
 
 $TopProcesses = Get-Process | Sort WS -Descending | Select ProcessName, Id, WS -First $Settings.ProcessNumToFetch | ConvertTo-Html -Fragment
 
-### Services
+### BEGIN Services
 $ServicesReport = @()
 foreach ($Service in $(Get-WmiObject -Class Win32_Service | Where {($_.StartMode -eq "Auto") -and ($_.State -eq "Stopped")})) {
 	$row = New-Object -Type PSObject -Property @{
@@ -213,60 +215,49 @@ $ServicesReport += $row
 }
 
 $ServicesReport = $ServicesReport | ConvertTo-Html -Fragment
-###
+### END Services
 
-
-
-
-
-break;
-
-
-foreach ($computer in $settings.computers) {
-
-	#region Event Logs Report
-	$SystemEventsReport = @()
-	$SystemEvents = Get-EventLog -ComputerName $computer -LogName System -EntryType Error,Warning -Newest $Settings.NumberEvents
-	foreach ($event in $SystemEvents) {
-		$row = New-Object -Type PSObject -Property @{
-			TimeGenerated = $event.TimeGenerated
-			EntryType = $event.EntryType
-			Source = $event.Source
-			Message = $event.Message
-		}
-		$SystemEventsReport += $row
+### BEGIN Event Logs
+$SystemEventsReport = @()
+foreach ($event in $(Get-EventLog -LogName System -EntryType Error,Warning -Newest $Settings.NumberEvents)) {
+	$row = New-Object -Type PSObject -Property @{
+		TimeGenerated = $event.TimeGenerated
+		EntryType = $event.EntryType
+		Source = $event.Source
+		Message = $event.Message
 	}
+	$SystemEventsReport += $row
+}
 			
-	$SystemEventsReport = $SystemEventsReport | ConvertTo-Html -Fragment
+$SystemEventsReport = $SystemEventsReport | ConvertTo-Html -Fragment
 	
-	$ApplicationEventsReport = @()
-	$ApplicationEvents = Get-EventLog -ComputerName $computer -LogName Application -EntryType Error,Warning -Newest $Settings.NumberEvents
-	foreach ($event in $ApplicationEvents) {
-		$row = New-Object -Type PSObject -Property @{
-			TimeGenerated = $event.TimeGenerated
-			EntryType = $event.EntryType
-			Source = $event.Source
-			Message = $event.Message
-		}
-		$ApplicationEventsReport += $row
+$ApplicationEventsReport = @()
+$ApplicationEvents = Get-EventLog -LogName Application -EntryType Error,Warning -Newest $Settings.NumberEvents
+foreach ($event in $ApplicationEvents) {
+	$row = New-Object -Type PSObject -Property @{
+		TimeGenerated = $event.TimeGenerated
+		EntryType = $event.EntryType
+		Source = $event.Source
+		Message = $event.Message
 	}
+	$ApplicationEventsReport += $row
+}
 	
-	$ApplicationEventsReport = $ApplicationEventsReport | ConvertTo-Html -Fragment
-	#endregion
-	
-	# Create the chart using our Chart Function
-	Create-PieChart -FileName ((Get-Location).Path + "\chart-$computer") $FreeRAM, $UsedRAM
-	$ListOfAttachments += "chart-$computer.png"
-	#region Uptime
-	# Fetch the Uptime of the current system using our Get-HostUptime Function.
-	$SystemUptime = Get-HostUptime -ComputerName $computer
-	#endregion
+$ApplicationEventsReport = $ApplicationEventsReport | ConvertTo-Html -Fragment
+### END Event Logs
 
-	# Create HTML Report for the current System being looped through
-	$CurrentSystemHTML = @"
+### BEGIN Uptime
+
+$Uptime = Get-WmiObject -Class Win32_OperatingSystem
+$LastBootUpTime = $Uptime.ConvertToDateTime($Uptime.LastBootUpTime)
+$Time = (Get-Date) - $LastBootUpTime
+$SystemUptime = '{0:00} Days, {1:00} Hours, {2:00} Minutes, {3:00} Seconds' -f $Time.Days, $Time.Hours, $Time.Minutes, $Time.Seconds
+### END Uptime
+
+$HTMLMiddle = @"
 	<hr noshade size=3 width="100%">
 	<div id="report">
-	<p><h2>$computer Report</p></h2>
+	<p><h2>$($env:computername) Report</p></h2>
 	<h3>System Info</h3>
 	<table class="list">
 	<tr>
@@ -291,7 +282,7 @@ foreach ($computer in $settings.computers) {
 	</tr>
 	</table>
 	
-	<IMG SRC="chart-$computer.png" ALT="$computer Chart">
+	<IMG SRC="chart-memory.png" ALT="$computer Chart">
 		
 	<h3>Disk Info</h3>
 	<p>Drive(s) listed below have less than $($settings.FreeDiskSpaceThreshold) % free space. Drives above this threshold will not be listed.</p>
@@ -320,9 +311,7 @@ foreach ($computer in $settings.computers) {
 	<table class="normal">$ApplicationEventsReport</table>
 "@
 	# Add the current System HTML Report into the final HTML Report body
-	$HTMLMiddle += $CurrentSystemHTML
 	
-	}
 
 # Assemble the closing HTML for our report.
 $HTMLEnd = @"
@@ -346,8 +335,10 @@ $HTMLmessage = $HTMLHeader + $HTMLMiddle + $HTMLEnd
 # Save the report out to a file in the current path
 $HTMLmessage | Out-File ((Get-Location).Path + "\report.html")
 # Email our report out
-send-mailmessage -from $smtp.sender -to $smtp.recipients -subject "Systems Report" -Attachments $ListOfAttachments -BodyAsHTML -body $HTMLmessage -priority Normal -smtpServer $smtp.server
+#send-mailmessage -from $smtp.sender -to $smtp.recipients -subject "Systems Report" -Attachments $ListOfAttachments -BodyAsHTML -body $HTMLmessage -priority Normal -smtpServer $smtp.server
 
 ##############################
 ## END Send Email
 ##############################
+
+#>
