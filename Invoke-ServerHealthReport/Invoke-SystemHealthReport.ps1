@@ -335,10 +335,9 @@ $HTMLmessage = $HTMLHeader + $HTMLMiddle + $HTMLEnd
 # Save the report out to a file in the current path
 $HTMLmessage | Out-File ((Get-Location).Path + "\report.html")
 # Email our report out
-#send-mailmessage -from $smtp.sender -to $smtp.recipients -subject "Systems Report" -Attachments $ListOfAttachments -BodyAsHTML -body $HTMLmessage -priority Normal -smtpServer $smtp.server
+send-mailmessage -from $smtp.sender -to $smtp.recipients -subject "Systems Report" -Attachments $ListOfAttachments -BodyAsHTML -body $HTMLmessage -priority Normal -smtpServer $smtp.server
 
 ##############################
 ## END Send Email
 ##############################
 
-#>
